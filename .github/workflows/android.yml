@@ -1,5 +1,14 @@
 name: Android
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Optional prerelease tag, such as v0.1.0-alpha.1'
+        required: false
+        default: ''
 permissions:
   contents: read
 jobs:
@@ -12,6 +21,9 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;34.0.0'
+          log-accepted-android-sdk-licenses: false
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
@@ -21,3 +33,30 @@ jobs:
         with:
           name: codex-android-debug
           path: app/build/outputs/apk/debug/app-debug.apk
+  release:
+    if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: codex-android-debug
+          path: dist
+      - name: Publish APK prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+$ ]]; then
+            echo 'Expected a tag such as v0.1.0-alpha.1'
+            exit 1
+          fi
+          mv dist/app-debug.apk dist/codex-android-debug.apk
+          (cd dist && sha256sum codex-android-debug.apk > SHA256SUMS.txt)
+          gh release create "$RELEASE_TAG" dist/codex-android-debug.apk dist/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
+            --title "$RELEASE_TAG — Android UI and file access" \
+            --notes-file .github/release-notes.md
