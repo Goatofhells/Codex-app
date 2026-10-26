@@ -76,7 +76,11 @@ public final class MainActivity extends Activity {
             else showWelcome();
             showFiles("files".equals(example));update();return;
         }
-        showWelcome();update();observe(session.connect(),this::account);
+        showWelcome();update();observe(session.connect(),result->{
+            account(result);
+            CompletableFuture<JSONObject> pending=session.pendingLogin();
+            if(pending!=null)observe(pending,attempt->{loginId=attempt.optString("loginId",null);status.setText("Finish sign-in in your browser");update();});
+        });
     }
     private void showFiles(boolean visible){chatPage.setVisibility(visible?View.GONE:View.VISIBLE);if(files!=null)files.panel.setVisibility(visible?View.VISIBLE:View.GONE);chatTab.setTextColor(visible?Ui.MUTED:Ui.GREEN);filesTab.setTextColor(visible?Ui.GREEN:Ui.MUTED);}
     private void showWelcome(){
@@ -106,7 +110,7 @@ public final class MainActivity extends Activity {
         String mode=getSharedPreferences("agent",0).getString("mode","workspaceWrite");permissions.setText(("dangerFullAccess".equals(mode)?"Full access":"readOnly".equals(mode)?"Read only":"Project access")+" ▾");
     }
     private void account(JSONObject data){ready=true;authenticated=data.optJSONObject("account")!=null;status.setText(authenticated?"●  Connected · ready":"●  Sign in to start chatting");status.setTextColor(authenticated?Ui.GREEN:Ui.MUTED);update();}
-    private void startLogin(){login.setEnabled(false);observe(session.login(),result->{loginId=result.optString("loginId",null);try{Uri uri=Uri.parse(result.getString("authUrl"));if(!"https".equals(uri.getScheme()))throw new IllegalStateException("Invalid sign-in URL");startActivity(new Intent(Intent.ACTION_VIEW,uri));status.setText("Finish sign-in in your browser");}catch(Exception e){error(e);}update();});}
+    private void startLogin(){login.setEnabled(false);observe(session.login(),result->{loginId=result.optString("loginId",null);try{Uri uri=Uri.parse(result.getString("authUrl"));if(!"https".equals(uri.getScheme()))throw new IllegalStateException("Invalid sign-in URL");startActivity(new Intent(Intent.ACTION_VIEW,uri));status.setText("Finish sign-in in your browser");}catch(Exception e){if(loginId!=null)session.cancelLogin(loginId);loginId=null;error(e);}update();});}
     private void submit(){String text=input.getText().toString().trim();if((text.isEmpty()&&attached==null)||busy||!authenticated||preview)return;busy=true;input.setText("");if(welcome){messages.removeAllViews();welcome=false;}String prompt=attached==null?text:text+"\n\n"+attached;add("You\n"+text+(attached==null?"":"\n[File attached]"));attached=null;attachment.setVisibility(View.GONE);status.setText("●  Codex is working…");update();observe(session.send(prompt),r->{});}
     private TextView add(String text){
         if(welcome){messages.removeAllViews();welcome=false;}

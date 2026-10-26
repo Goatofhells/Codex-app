@@ -4,6 +4,7 @@ import android.app.Application;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.io.File;
+import java.util.Map;
 import java.util.concurrent.*;
 import static dev.codex.android.CodexConnection.json;
 
@@ -16,6 +17,9 @@ public final class CodexSession extends Application {
     private String threadId;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private CompletableFuture<JSONObject> startup;
+    private volatile Map<String,String> runtimeEnvironment;
+    private CodexCliLogin activeLogin;
+    private CompletableFuture<JSONObject> loginStart;
 
     public synchronized CompletableFuture<JSONObject> connect() {
         if (startup != null) return startup;
@@ -41,11 +45,12 @@ public final class CodexSession extends Application {
                 File certificates = new File("/apex/com.android.conscrypt/cacerts");
                 if (!certificates.isDirectory()) certificates = new File("/system/etc/security/cacerts");
                 builder.environment().put("SSL_CERT_DIR", certificates.getAbsolutePath());
+                runtimeEnvironment = java.util.Collections.unmodifiableMap(new java.util.HashMap<>(builder.environment()));
                 connection = new CodexConnection(builder.start(), new CodexConnection.Listener() {
                     public void notification(String method, JSONObject data) { emit(method, data); }
                     public void disconnected(String reason) { if (network != null) network.close(); emit("disconnected", json("message", reason)); }
                 });
-                connection.request("initialize", json("clientInfo", json("name", "codex_android", "title", "Codex Android", "version", "0.1.0"))).get(65, TimeUnit.SECONDS);
+                connection.request("initialize", json("clientInfo", json("name", "codex_android", "title", "Codex Android", "version", BuildConfig.VERSION_NAME))).get(65, TimeUnit.SECONDS);
                 connection.notifyInitialized();
                 return connection.request("account/read", json("refreshToken", false)).get(65, TimeUnit.SECONDS);
             } catch (Exception e) {
@@ -62,8 +67,60 @@ public final class CodexSession extends Application {
         if (current != null) current.event(method, data == null ? json() : data);
     }
     public CompletableFuture<JSONObject> account() { return connection.request("account/read", json("refreshToken", false)); }
-    public CompletableFuture<JSONObject> login() { return connection.request("account/login/start", json("type", "chatgpt")); }
-    public CompletableFuture<JSONObject> cancelLogin(String id) { return connection.request("account/login/cancel", json("loginId", id)); }
+    public synchronized CompletableFuture<JSONObject> login() {
+        if (loginStart != null) return loginStart;
+        if (runtimeEnvironment == null) return failed(new IllegalStateException("Connect to Codex before signing in."));
+        try { LoginKeepAliveService.begin(this); }
+        catch (RuntimeException e) { return failed(new IllegalStateException("Android could not keep the browser sign-in session alive.", e)); }
+        CompletableFuture<JSONObject> result = new CompletableFuture<>();
+        loginStart = result;
+        worker.execute(() -> {
+            try {
+                File executable = new File(getApplicationInfo().nativeLibraryDir, "libcodex.so");
+                ProcessBuilder builder = new ProcessBuilder(executable.getAbsolutePath(), "login");
+                builder.directory(new File(getFilesDir(), "workspace"));
+                builder.environment().clear(); builder.environment().putAll(runtimeEnvironment);
+                builder.redirectErrorStream(true);
+                CodexCliLogin attempt = new CodexCliLogin(builder.start(), this::loginFinished);
+                synchronized (this) { activeLogin = attempt; }
+                attempt.start().whenComplete((value,error) -> {
+                    if (error != null) result.completeExceptionally(error); else result.complete(value);
+                });
+            } catch (Exception e) {
+                synchronized (this) { loginStart = null; }
+                LoginKeepAliveService.end(this);
+                result.completeExceptionally(e);
+            }
+        });
+        return result;
+    }
+    private void loginFinished(String id, boolean success, String error) {
+        synchronized (this) {
+            if (activeLogin == null || !activeLogin.id().equals(id)) return;
+            activeLogin = null; loginStart = null;
+        }
+        if (!success) {
+            LoginKeepAliveService.end(this);
+            emit("account/login/completed", json("loginId",id,"success",false,"error",error));
+            return;
+        }
+        // The CLI saved credentials in the same CODEX_HOME. Restart to discard cached auth.
+        restart().whenComplete((account,failure) -> {
+            LoginKeepAliveService.end(this);
+            boolean signedIn = failure == null && account != null && account.optJSONObject("account") != null;
+            emit("account/login/completed",json("loginId",id,"success",signedIn,"error",signedIn?JSONObject.NULL:"Browser sign-in ended, but Codex could not reload the saved account. Tap the runtime status to retry."));
+        });
+    }
+    public synchronized CompletableFuture<JSONObject> cancelLogin(String id) {
+        if (activeLogin != null && activeLogin.id().equals(id)) activeLogin.close();
+        return CompletableFuture.completedFuture(json());
+    }
+    public synchronized void cancelActiveLogin() { if (activeLogin != null) activeLogin.close(); }
+    public synchronized CompletableFuture<JSONObject> pendingLogin() { return loginStart; }
+    private static CompletableFuture<JSONObject> failed(Exception error) {
+        CompletableFuture<JSONObject> result = new CompletableFuture<>();
+        result.completeExceptionally(error); return result;
+    }
     public CompletableFuture<JSONObject> logout() {
         threadId = null;
         return connection.request("account/logout", json());

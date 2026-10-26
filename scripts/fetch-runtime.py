@@ -7,10 +7,10 @@ import tarfile
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.114.0"
+VERSION = "0.163.0"
 TARGETS = {
-    "arm64-v8a": ("arm64", "aarch64", "47da2ec8209ced6102d9817551eae0751320e9ee8453df5a2d33dec685af1935"),
-    "x86_64": ("x64", "x86_64", "847939c01c628eaad8a8754ac9eb365c03c55a24d5264a6f2deba8fc67c909b4"),
+    "arm64-v8a": ("arm64", "aarch64", "8a96f66d059d653e68bfd5f3c79337e6f1d7d170d80bf705eb7d0249b34c0ece"),
+    "x86_64": ("x64", "x86_64", "399ff69c431c066e40de318fba45c2b07f45a76b19939d247ee4828fc70c4215"),
 }
 
 for abi, (npm_arch, rust_arch, expected) in TARGETS.items():
@@ -18,7 +18,7 @@ for abi, (npm_arch, rust_arch, expected) in TARGETS.items():
     with urllib.request.urlopen(url, timeout=120) as response:
         archive = response.read()
     with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as package:
-        member = package.extractfile(f"package/vendor/{rust_arch}-unknown-linux-musl/codex/codex")
+        member = package.extractfile(f"package/vendor/{rust_arch}-unknown-linux-musl/bin/codex")
         binary = member.read()
     if hashlib.sha256(binary).hexdigest() != expected:
         raise SystemExit(f"Checksum mismatch for {abi}; runtime not written")

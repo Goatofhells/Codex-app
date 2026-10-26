@@ -58,5 +58,5 @@ jobs:
           (cd dist && sha256sum codex-android-debug.apk > SHA256SUMS.txt)
           gh release create "$RELEASE_TAG" dist/codex-android-debug.apk dist/SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
-            --title "$RELEASE_TAG — Android UI and file access" \
+            --title "$RELEASE_TAG — Codex for Android" \
             --notes-file .github/release-notes.md

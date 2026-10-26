@@ -8,25 +8,33 @@ Native UI previews (sample data):
 
 Native Android client for ChatGPT sign-in and streamed Codex chat using a private
 `codex app-server` child process over stdio. No Termux, visible terminal, remote
-relay, detached daemon, or foreground service. This is an unofficial client.
+relay, or detached daemon. A temporary foreground notification keeps browser
+sign-in alive and stops when the attempt finishes, is cancelled, or expires. This is an unofficial client.
 
 ## Current status
 
 The redesigned native UI and file tools build successfully. The debug APK bundles
 pinned upstream static-musl Codex executables for arm64 and x86_64.
 
-**Login and live chat are not yet working end to end.** On Android 15, a shell
+**Login and live chat still need end-to-end device verification.** On Android 15, a shell
 startup probe completed `initialize` and `account/read`. In the installed Android
 9 app, the child connection closed during startup; this remains unresolved.
 Android emulator system-service restarts also prevented reliable device testing.
-An executable working from the Android shell does not establish app compatibility.
+That historical result does not establish compatibility of the updated runtime.
+The user's Ubuntu/proot installation uses Codex 0.163.0 and completes login;
+the first APK bundled 0.114.0. Version 0.1.1 matches 0.163.0 and now runs the
+bundled `codex login` command directly. Its CLI-generated OAuth URL is forwarded
+unchanged, preserving originator, state, PKCE, and the IPv4 loopback callback.
+The custom app-server client identity no longer supplies the browser login URL.
+After successful CLI exit, app-server restarts and verifies the saved account.
 Arm64 devices, OAuth completion, model access, and Android sandbox policies remain
 acceptance gates. This is a UI/file-access development prototype, not a completed
 login-and-chat milestone.
 
-Protocol reference: [Codex rust-v0.114.0 app-server](https://github.com/openai/codex/blob/rust-v0.114.0/codex-rs/app-server/README.md).
+Protocol reference: [Codex rust-v0.163.0 app-server](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/app-server/README.md).
 The client uses `initialize`/`initialized`, `account/read`, browser-based
-`account/login/start`, login notifications/cancel, logout, `thread/start`, and
+`codex login` for browser authorization, app-local login completion/cancel,
+logout, `thread/start`, and
 `turn/start`, plus streamed agent messages and completion/error events.
 
 ## Build
@@ -44,7 +52,7 @@ with `sdk.dir=/absolute/path/to/android-sdk`.
 
 ## Bundled runtime
 
-`python3 scripts/fetch-runtime.py` downloads Codex 0.114.0 from the official
+`python3 scripts/fetch-runtime.py` downloads Codex 0.163.0 from the official
 `@openai/codex` npm package, verifies pinned SHA-256 hashes, and writes each
 executable to `app/src/main/jniLibs/<abi>/libcodex.so`. The `.so` name is an Android
 packaging convention; these are static PIE executables, not JNI libraries.
@@ -70,7 +78,7 @@ the installed app.
 `CODEX_HOME`, `HOME`, workspace, and temporary files use app-private storage.
 Backups are disabled. Codex owns OAuth tokens and refresh; the UI never reads or
 logs tokens. This does not add hardware-backed encryption for Codex credential
-files. Browser login relies on Codex's temporary localhost OAuth callback listener
+files. Browser login relies on Codex's temporary IPv4 loopback OAuth callback listener
 (separate from the stdio app-server transport). Verify the callback and process
 survival while the browser is in front on target Android versions/OEMs.
 
@@ -98,8 +106,8 @@ survival while the browser is in front on target Android versions/OEMs.
 
 ## Other behavior and limits
 
-Sign-in opens the URL returned by Codex in the system browser and verifies account
-state through the protocol. Switching to the browser retains the application-owned
+Sign-in opens the URL printed by the bundled `codex login` command and verifies
+the saved account through a fresh app-server connection. Switching to the browser retains the application-owned
 process, subject to Android process limits. The runtime status can be tapped to
 retry a failed connection.
 
@@ -125,7 +133,8 @@ Local JVM tests exercise stdio response correlation, interleaved streaming,
 approval refusal, RPC errors, pending-request failure on process exit, and
 authenticated network tunnelling with host restrictions. Robolectric tests render
 native views, check the composer fits, verify the Android folder-picker intent,
-and check the three permission choices. Eight tests pass. They do not substitute
+and check the three permission choices. Fourteen tests pass, including actual-runtime OAuth URL and account-handshake
+smoke tests, cancellation, and the sign-in foreground notification. They do not substitute
 for device tests of grants, provider writes, or live Codex access.
 
 ## Visual previews
@@ -145,3 +154,24 @@ Release builds ignore the preview extra.
 `previews/login-ui.png`, `chat-ui.png`, and `files-ui.png` are native Android view
 renders generated by `UiPreviewTest` with sample chat data. They are not successful
 OAuth/model-session screenshots. Run `./gradlew testDebugUnitTest` to regenerate.
+
+## Login compatibility update (0.1.1)
+
+The previous browser attempt was not equivalent to the user's working Termux
+Ubuntu/proot setup: both Codex version and OAuth originator differed. The update
+aligns the version and uses the CLI login path. No browser consent is bypassed,
+no tokens are pasted into the app, and the authorize URL is neither modified nor
+logged. A sign-in attempt expires after ten minutes; startup has a thirty-second
+URL timeout. Cancellation destroys the login child process. A temporary visible
+foreground service protects the session while the browser is in front.
+
+Reaching the expected authorization URL in a test does not prove that the hosted
+consent page, callback, token exchange, or authenticated chat works on Android.
+Those steps still need a real account/device acceptance test. Full Linux sandbox
+and optional helper/voice-resource support from the larger Codex package is not
+claimed by this two-architecture chat prototype.
+
+Development APKs are debug-signed by the build runner. If Android rejects an
+update because the signatures differ, uninstall the earlier alpha first (this
+removes its local app state), then install the new APK. Production signing and
+stable upgrade signing are not configured yet.
